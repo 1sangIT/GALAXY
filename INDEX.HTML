@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Retro Space Shooter</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #111;
+            color: white;
+            font-family: 'Press Start 2P', cursive;
+            overflow: hidden;
+            touch-action: none; /* 모바일 스크롤 방지 */
+        }
+        #game-container {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: radial-gradient(circle at center, #1a1a2e 0%, #000000 100%);
+        }
+        canvas {
+            background-color: rgba(0, 0, 0, 0.8);
+            box-shadow: 0 0 20px rgba(0, 150, 255, 0.3);
+            image-rendering: pixelated;
+        }
+        .ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            pointer-events: auto;
+        }
+        .hidden {
+            display: none !important;
+        }
+        .retro-btn {
+            background: transparent;
+            border: 4px solid #4ade80;
+            color: #4ade80;
+            padding: 15px 30px;
+            font-family: 'Press Start 2P', cursive;
+            font-size: 16px;
+            cursor: pointer;
+            text-transform: uppercase;
+            margin-top: 20px;
+            transition: all 0.2s;
+        }
+        .retro-btn:hover {
+            background: #4ade80;
+            color: #000;
+            box-shadow: 0 0 15px #4ade80;
+        }
+        .score-board {
+            color: #ff0055;
+            text-shadow: 2px 2px #fff;
+            font-size: 20px;
+        }
+        .lives {
+            color: #4ade80;
+            font-size: 20px;
+        }
+        
+        /* 모바일 컨트롤 안내 */
+        .mobile-hint {
+            display: none;
+            position: absolute;
+            bottom: 20%;
+            width: 100%;
+            text-align: center;
+            color: rgba(255,255,255,0.5);
+            font-size: 12px;
+            pointer-events: none;
+        }
+        @media (hover: none) and (pointer: coarse) {
+            .mobile-hint { display: block; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- UI Layer -->
+    <div class="ui-layer">
+        <div class="flex justify-between w-full max-w-2xl mx-auto">
+            <div class="score-board">SCORE: <span id="scoreEl">0</span></div>
+            <div class="lives">LIVES: <span id="livesEl">3</span></div>
+        </div>
+    </div>
+
+    <!-- Start Screen -->
+    <div id="startScreen" class="overlay">
+        <h1 class="text-4xl md:text-6xl text-blue-400 mb-4 text-center" style="text-shadow: 4px 4px #ff0055;">GALAGA<br><span class="text-2xl text-white">REMIX</span></h1>
+        <p class="text-yellow-300 mb-8 text-xs md:text-sm text-center leading-6">
+            PC: 화살표 키로 이동, 스페이스바로 발사<br>
+            Mobile: 터치 & 드래그로 이동 (자동 발사)
+        </p>
+        <button class="retro-btn" onclick="startGame()">START GAME</button>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="gameOverScreen" class="overlay hidden">
+        <h1 class="text-5xl text-red-500 mb-4">GAME OVER</h1>
+        <p class="text-white mb-4">FINAL SCORE: <span id="finalScore">0</span></p>
+        <button class="retro-btn" onclick="restartGame()">TRY AGAIN</button>
+    </div>
+
+    <div class="mobile-hint">화면을 드래그하여 이동하세요</div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('scoreEl');
+    const livesEl = document.getElementById('livesEl');
+    const finalScoreEl = document.getElementById('finalScore');
+    const startScreen = document.getElementById('startScreen');
+    const gameOverScreen = document.getElementById('gameOverScreen');
+
+    // 게임 상태 변수
+    let gameLoopId;
+    let lastTime = 0;
+    let score = 0;
+    let gameActive = false;
+    let frameCount = 0;
+    
+    // 캔버스 크기 설정
+    function resizeCanvas() {
+        canvas.width = Math.min(window.innerWidth, 600);
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // 입력 처리
+    const keys = {
+        ArrowLeft: false,
+        ArrowRight: false,
+        Space: false
+    };
+
+    // 모바일 터치 상태
+    const touch = {
+        active: false,
+        x: 0
+    };
+
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'ArrowLeft') keys.ArrowLeft = true;
+        if (e.code === 'ArrowRight') keys.ArrowRight = true;
+        if (e.code === 'Space') keys.Space = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+        if (e.code === 'ArrowLeft') keys.ArrowLeft = false;
+        if (e.code === 'ArrowRight') keys.ArrowRight = false;
+        if (e.code === 'Space') keys.Space = false;
+    });
+
+    // 모바일 터치 이벤트
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        touch.active = true;
+        touch.x = e.touches[0].clientX - canvas.getBoundingClientRect().left;
+    }, {passive: false});
+
+    canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        touch.x = e.touches[0].clientX - canvas.getBoundingClientRect().left;
+    }, {passive: false});
+
+    canvas.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        touch.active = false;
+    });
+
+    // 유틸리티 함수
+    function rectIntersect(r1, r2) {
+        return !(r2.x > r1.x + r1.width || 
+                 r2.x + r2.width < r1.x || 
+                 r2.y > r1.y + r1.height || 
+                 r2.y + r2.height < r1.y);
+    }
+
+    function random(min, max) {
+        return Math.random() * (max - min) + min;
+    }
+
+    // 클래스 정의
+    class Star {
+        constructor() {
+            this.reset();
+            this.y = random(0, canvas.height); // 처음에 화면 전체에 분포
+        }
+
+        reset() {
+            this.x = random(0, canvas.width);
+            this.y = 0;
+            this.size = random(1, 3);
+            this.speed = random(2, 10); // 속도감 있는 배경
+            this.color = `rgba(255, 255, 255, ${random(0.3, 1)})`;
+        }
+
+        update() {
+            this.y += this.speed;
+            if (this.y > canvas.height) {
+                this.reset();
+            }
+        }
+
+        draw() {
+            ctx.fillStyle = this.color;
+            ctx.fillRect(this.x, this.y, this.size, this.size);
+        }
+    }
+
+    class Particle {
+        constructor(x, y, color) {
+            this.x = x;
+            this.y = y;
+            this.vx = random(-3, 3);
+            this.vy = random(-3, 3);
+            this.life = 1.0;
+            this.color = color;
+            this.size = random(2, 4);
+        }
+
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.life -= 0.02;
+        }
+
+        draw() {
+            ctx.globalAlpha = Math.max(0, this.life);
+            ctx.fillStyle = this.color;
+            ctx.fillRect(this.x, this.y, this.size, this.size);
+            ctx.globalAlpha = 1.0;
+        }
+    }
+
+    class Bullet {
+        constructor(x, y, dy, color, isEnemy = false) {
+            this.x = x;
+            this.y = y;
+            this.dy = dy; // 수직 속도
+            this.width = 4;
+            this.height = 10;
+            this.color = color;
+            this.isEnemy = isEnemy;
+            this.markedForDeletion = false;
+        }
+
+        update() {
+            this.y += this.dy;
+            if (this.y < 0 || this.y > canvas.height) {
+                this.markedForDeletion = true;
+            }
+        }
+
+        draw() {
+            ctx.fillStyle = this.color;
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+        }
+    }
+
+    class Player {
+        constructor() {
+            this.width = 30;
+            this.height = 30;
+            this.x = canvas.width / 2 - this.width / 2;
+            this.y = canvas.height - 60;
+            this.speed = 5;
+            this.color = '#00ffcc';
+            this.bullets = [];
+            this.shootTimer = 0;
+            this.lives = 5; // 난이도 완화: 목숨 5개로 시작
+            this.invincible = false;
+            this.invincibleTimer = 0;
+        }
+
+        update() {
+            // PC 이동
+            if (keys.ArrowLeft) this.x -= this.speed;
+            if (keys.ArrowRight) this.x += this.speed;
+
+            // 모바일 이동 (터치 위치로 부드럽게 이동)
+            if (touch.active) {
+                const targetX = touch.x - this.width / 2;
+                const dx = targetX - this.x;
+                this.x += dx * 0.2; // 부드러운 추적
+            }
+
+            // 화면 경계 제한
+            if (this.x < 0) this.x = 0;
+            if (this.x + this.width > canvas.width) this.x = canvas.width - this.width;
+
+            // 발사 (스페이스바 또는 모바일은 자동/터치 시 발사)
+            if (this.shootTimer > 0) this.shootTimer--;
+            if ((keys.Space || touch.active) && this.shootTimer === 0) {
+                this.shoot();
+                this.shootTimer = 15; // 연사 속도 제한
+            }
+
+            // 무적 시간 관리
+            if (this.invincible) {
+                this.invincibleTimer--;
+                if (this.invincibleTimer <= 0) this.invincible = false;
+            }
+        }
+
+        shoot() {
+            // 난이도 완화: 1500점만 되면 파워업 (기존 3000점에서 하향 조정)
+            if (score >= 1500) {
+                // 파워업: 듀얼 샷
+                game.bullets.push(new Bullet(this.x, this.y, -10, '#ff3366', false));
+                game.bullets.push(new Bullet(this.x + this.width - 4, this.y, -10, '#ff3366', false));
+            } else {
+                // 기본: 싱글 샷
+                game.bullets.push(new Bullet(this.x + this.width / 2 - 2, this.y, -10, '#ff3366', false));
+            }
+        }
+
+        draw() {
+            if (this.invincible && Math.floor(Date.now() / 100) % 2 === 0) return; // 깜빡임 효과
+
+            ctx.fillStyle = this.color;
+            
+            // 우주선 그리기 (픽셀 아트 스타일 흉내)
+            ctx.beginPath();
+            ctx.moveTo(this.x + this.width/2, this.y);
+            ctx.lineTo(this.x + this.width, this.y + this.height);
+            ctx.lineTo(this.x + this.width/2, this.y + this.height - 10);
+            ctx.lineTo(this.x, this.y + this.height);
+            ctx.closePath();
+            ctx.fill();
+
+            // 엔진 불꽃
+            if (Math.random() > 0.5) {
+                ctx.fillStyle = 'orange';
+                ctx.fillRect(this.x + this.width/2 - 2, this.y + this.height - 5, 4, 10);
+            }
+        }
+        
+        hit() {
+            if (this.invincible) return;
+            
+            this.lives--;
+            livesEl.innerText = this.lives;
+            this.invincible = true;
+            this.invincibleTimer = 120; // 약 2초
+            
+            // 폭발 효과
+            for(let i=0; i<20; i++) {
+                game.particles.push(new Particle(this.x + this.width/2, this.y + this.height/2, '#00ffcc'));
+            }
+
+            if (this.lives <= 0) {
+                game.gameOver();
+            }
+        }
+    }
+
+    class Enemy {
+        constructor(x, y, type) {
+            this.x = x;
+            this.y = y;
+            this.width = 30;
+            this.height = 30;
+            this.type = type; // 0: Bee, 1: Butterfly, 2: Boss
+            this.markedForDeletion = false;
+            
+            // 타입별 색상 및 점수
+            if (type === 0) { this.color = '#ffff00'; this.score = 100; } // 노랑
+            else if (type === 1) { this.color = '#ff0055'; this.score = 200; } // 빨강
+            else { this.color = '#00ff00'; this.score = 400; this.hp = 2; } // 초록(보스)
+            
+            // 애니메이션 상태
+            this.wingState = 0; 
+        }
+
+        update(dx, dy) {
+            this.x += dx;
+            this.y += dy;
+            
+            // 날개짓 애니메이션
+            if (frameCount % 10 === 0) {
+                this.wingState = this.wingState === 0 ? 1 : 0;
+            }
+            
+            // 랜덤 사격 (난이도 완화: 발사 확률을 절반 이하로 낮춤)
+            if (Math.random() < 0.0005 + (game.level * 0.0001)) { 
+                game.bullets.push(new Bullet(this.x + this.width/2 - 2, this.y + this.height, 4, '#fff', true));
+            }
+        }
+
+        draw() {
+            ctx.fillStyle = this.color;
+            
+            // 간단한 외계인 스프라이트 그리기
+            const cx = this.x + this.width/2;
+            const cy = this.y + this.height/2;
+            
+            if (this.type === 2) { // Boss
+                ctx.beginPath();
+                ctx.moveTo(cx, this.y);
+                ctx.lineTo(this.x + this.width, this.y + this.height/2);
+                ctx.lineTo(cx, this.y + this.height);
+                ctx.lineTo(this.x, this.y + this.height/2);
+                ctx.fill();
+            } else { // Minions
+                ctx.fillRect(this.x + 5, this.y + 5, 20, 20); // 몸통
+                // 날개
+                if (this.wingState === 0) {
+                    ctx.fillRect(this.x, this.y, 8, 15);
+                    ctx.fillRect(this.x + 22, this.y, 8, 15);
+                } else {
+                    ctx.fillRect(this.x, this.y + 5, 8, 8);
+                    ctx.fillRect(this.x + 22, this.y + 5, 8, 8);
+                }
+            }
+        }
+    }
+
+    class Game {
+        constructor() {
+            this.player = new Player();
+            this.bullets = [];
+            this.enemies = [];
+            this.particles = [];
+            this.stars = [];
+            this.level = 1;
+            
+            // 적군 그리드 이동 로직 변수
+            this.enemyDir = 1; // 1: 오른쪽, -1: 왼쪽
+            this.enemyMoveSpeed = 1; // 기본 이동 속도
+            this.enemyDropDistance = 10; // 벽에 닿았을 때 내려오는 거리
+
+            // 배경 별 생성
+            for(let i=0; i<50; i++) this.stars.push(new Star());
+        }
+
+        startLevel() {
+            this.enemies = [];
+            this.bullets = [];
+            // 난이도 완화: 적 이동 속도 시작을 1.0 -> 0.6으로 줄이고 증가폭도 감소
+            this.enemyMoveSpeed = 0.6 + (this.level * 0.1); 
+            
+            const rows = 4;
+            const cols = 8;
+            const startX = 50;
+            const startY = 50;
+            
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    // 상단 줄은 보스급(2), 중간은(1), 하단은(0)
+                    let type = 0;
+                    if (r === 0) type = 2;
+                    else if (r === 1) type = 1;
+                    
+                    this.enemies.push(new Enemy(startX + c * 45, startY + r * 40, type));
+                }
+            }
+        }
+
+        update() {
+            // 배경 별 업데이트
+            this.stars.forEach(star => {
+                star.update();
+                star.draw();
+            });
+
+            // 플레이어 업데이트
+            this.player.update();
+            this.player.draw();
+
+            // 적군 이동 로직
+            let hitEdge = false;
+            // 가장자리에 닿았는지 확인
+            for (let enemy of this.enemies) {
+                if ((this.enemyDir === 1 && enemy.x + enemy.width > canvas.width - 10) ||
+                    (this.enemyDir === -1 && enemy.x < 10)) {
+                    hitEdge = true;
+                    break;
+                }
+            }
+
+            if (hitEdge) {
+                this.enemyDir *= -1;
+                this.enemies.forEach(enemy => enemy.y += this.enemyDropDistance);
+            }
+
+            // 적군 업데이트
+            this.enemies.forEach(enemy => {
+                enemy.update(this.enemyMoveSpeed * this.enemyDir, 0);
+                enemy.draw();
+                
+                // 플레이어와 충돌 확인
+                if (rectIntersect(this.player, enemy)) {
+                    this.player.hit();
+                    enemy.markedForDeletion = true;
+                    // 파티클 생성
+                    for(let i=0; i<10; i++) {
+                        this.particles.push(new Particle(enemy.x + enemy.width/2, enemy.y + enemy.height/2, enemy.color));
+                    }
+                }
+            });
+
+            // 총알 업데이트 및 충돌 처리
+            this.bullets.forEach(bullet => {
+                bullet.update();
+                bullet.draw();
+
+                if (bullet.isEnemy) {
+                    // 적 총알이 플레이어에게
+                    if (rectIntersect(bullet, this.player)) {
+                        this.player.hit();
+                        bullet.markedForDeletion = true;
+                    }
+                } else {
+                    // 플레이어 총알이 적에게
+                    for (let enemy of this.enemies) {
+                        if (rectIntersect(bullet, enemy)) {
+                            bullet.markedForDeletion = true;
+                            
+                            // 보스 HP 처리
+                            if (enemy.type === 2 && enemy.hp > 1) {
+                                enemy.hp--;
+                                // 피격 효과
+                                enemy.y -= 2;
+                            } else {
+                                enemy.markedForDeletion = true;
+                                score += enemy.score;
+                                scoreEl.innerText = score;
+                                
+                                // 파티클 효과
+                                for(let i=0; i<8; i++) {
+                                    this.particles.push(new Particle(enemy.x + enemy.width/2, enemy.y + enemy.height/2, enemy.color));
+                                }
+                            }
+                            break; // 총알 하나로 한 마리만
+                        }
+                    }
+                }
+            });
+
+            // 파티클 업데이트
+            this.particles.forEach(p => {
+                p.update();
+                p.draw();
+                if (p.life <= 0) p.markedForDeletion = true;
+            });
+
+            // 삭제 처리
+            this.bullets = this.bullets.filter(b => !b.markedForDeletion);
+            this.enemies = this.enemies.filter(e => !e.markedForDeletion);
+            this.particles = this.particles.filter(p => !p.markedForDeletion);
+
+            // 레벨 클리어 체크
+            if (this.enemies.length === 0) {
+                this.level++;
+                // 레벨업 텍스트 표시 효과 (간단히)
+                ctx.fillStyle = 'white';
+                ctx.font = '30px "Press Start 2P"';
+                ctx.fillText("LEVEL " + this.level, canvas.width/2 - 80, canvas.height/2);
+                
+                // 잠시 후 다음 레벨 시작 (비동기 딜레이 없이 즉시 실행을 막기 위해 간단한 플래그 처리 필요하지만, 여기서는 바로 생성)
+                if (frameCount % 60 === 0) this.startLevel();
+            }
+        }
+
+        gameOver() {
+            gameActive = false;
+            finalScoreEl.innerText = score;
+            gameOverScreen.classList.remove('hidden');
+        }
+    }
+
+    let game;
+
+    function loop(timestamp) {
+        if (!gameActive) return;
+
+        // 델타 타임 계산 (프레임 속도 독립적 움직임을 위해 필요하지만 간단한 게임이라 생략하고 고정 스텝 사용)
+        const deltaTime = timestamp - lastTime;
+        lastTime = timestamp;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        game.update();
+        
+        frameCount++;
+        gameLoopId = requestAnimationFrame(loop);
+    }
+
+    function startGame() {
+        score = 0;
+        scoreEl.innerText = "0";
+        livesEl.innerText = "5"; // UI 초기화도 5개로 변경
+        startScreen.classList.add('hidden');
+        gameOverScreen.classList.add('hidden');
+        
+        game = new Game();
+        game.startLevel();
+        gameActive = true;
+        gameLoopId = requestAnimationFrame(loop);
+    }
+
+    function restartGame() {
+        startGame();
+    }
+
+    // 초기 화면 렌더링 (별 배경만)
+    function introLoop() {
+        if (gameActive) return;
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // 간단한 별 효과
+        if(Math.random() > 0.5) {
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 2, 2);
+        }
+        requestAnimationFrame(introLoop);
+    }
+    
+    // 첫 로드 시 intro 실행하지 않고 정적 배경으로 둠, start 누르면 시작
+    resizeCanvas();
+
+</script>
+</body>
+</html>
